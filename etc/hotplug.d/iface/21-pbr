@@ -1,0 +1,161 @@
+﻿#!/bin/sh
+. /lib/functions/network.sh
+. /usr/share/libubox/jshn.sh
+
+__pbr_src_file=/root/pbr.$INTERFACE.json
+__pbr_file_rules=/var/run/pbr.$INTERFACE.rules.json
+__pbr_file_pid=/var/run/pbr.$INTERFACE.pid
+
+
+__log () {
+	# msg=$1
+	local __msg="$1"
+	logger -t "PBR" $__msg
+} 
+
+
+
+__log_rule() {
+	local __act=$1
+	local __act_res=$2
+	local __rule_name=$3
+
+	case "$__act" in
+		"add")
+			[ $__act_res ] && {
+				__log "|   √ $__rule_name"
+			} || {
+				__log "|   x $__rule_name"
+			}
+		;;
+		
+		"del")
+			[ $__act_res ] && {
+				__log "|   √ $__rule_name"
+			} || {
+				__log "|   x $__rule_name"
+			}
+
+		;;
+	esac
+}
+
+
+
+__process_rules() {
+	local __rule_file=$1
+	local __action=$2
+	local __action_iface=$3
+	[ ! $__action ] && {
+		echo ""
+		return
+	}
+	[ ! $__action_iface ] && {
+		echo ""
+		return
+	}
+	[ ! -rf $__rule_file ] && {
+		__log "JSON file ($__rule_file) is not exist or doesn't have read permission"
+		echo ""
+		return
+	}
+
+        json_init
+	json_load_file $__rule_file
+	[ ! json_is_a rules array ] && {
+		__log "JSON file ($__rule_file) should contain root node named 'rules' as an array of objects!"
+		echo ""
+		return
+	}
+	json_select rules
+
+	__log "Processing rules from ${__rule_file}..."
+	local __rule_idx=1
+	while json_is_a ${__rule_idx} object
+	do
+		json_select $__rule_idx
+		json_get_var rule_src_ip src_ip
+		json_get_var rule_dest_ip dest_ip
+		json_get_var rule_lookuptable lookup_table
+		json_get_var rule_name name
+		json_close_object
+
+		__rule_idx=$(($__rule_idx + 1))
+		ip rule ${__action} from ${rule_src_ip} to ${rule_dest_ip} table ${rule_lookuptable} &&	__log_rule $__action "0" "$rule_name" || __log_rule $__action "" "$rule_name"
+	done
+	json_cleanup
+	[ ${__rule_idx} -gt 1 ] && echo "0" || echo ""
+} 
+
+
+
+__get_last_modifydate() {
+	local fname=$1
+	echo `date -r $fname +"%Y%m%d%H%M%S"`
+} 
+
+
+
+__cleanup_var() {
+	rm -rf $__pbr_file_pid
+	rm -rf $__pbr_file_rules
+} 
+
+
+
+__result_check() {
+}
+
+__action_iface=$INTERFACE
+__version_new=$(__get_last_modifydate $__pbr_src_file)
+__log "Checking ...Current rules version is $__version_new ..."
+__log "debug: Action=$ACTION; Device=$DEVICE; Interface=$__action_iface"
+__log "=====================$__version_new====================="
+case $ACTION in
+	ifup)
+		__log "| ${__action_iface} ↑"
+		[ -f $__pbr_file_pid ] && {
+			__log "Seems like something went in a wrong way..."
+			__version_current=$(cat $__pbr_file_pid)
+			[ $__version_new -gt $__version_current ] && {
+				__log "Oh, we have old rules applied and got new ones to apply. Let's remove old ones..."
+				[ $(__process_rules $__pbr_file_rules del $__action_iface) ] && {
+					__log "Old rules removed..."
+				} || {
+					__log "Can't remove old rules. You have to do it manually. Exiting..."
+				} # Remove rules
+				__cleanup_var
+			} || {
+				__log "Nah, everything is ok, nothing to apply, my bad. Your rules are up-to-date!"
+				break
+			} # Version check
+		} # Incorrect workflow
+
+
+
+		[ $(__process_rules $__pbr_src_file add $__action_iface) ] && {
+			cp $__pbr_src_file $__pbr_file_rules
+
+			echo $__version_new > $__pbr_file_pid
+			chmod =r $__pbr_file_rules	
+			__log "${__pbr_file_pid} written!"
+			__log "${__pbr_file_rules} written!"
+		} || {
+			__log "No rules to apply or can't apply rules, exiting..."
+		} # Apply rules
+	;;
+
+
+	ifdown)
+		__log "| ${__action_iface} ↓"
+		[ ! -rf "${__pbr_file_pid}" ] && exit 100
+		[ ! -rf "${__pbr_file_rules}" ] && exit 101
+
+		[ ! $(__process_rules $__pbr_file_rules del $__action_iface) ] && {
+			__log "Unable to delete applied rules..."
+		}
+		__cleanup_var
+	;;
+esac
+__log "=====================$__version_new====================="
+

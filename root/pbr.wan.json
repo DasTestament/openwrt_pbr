@@ -1,0 +1,6 @@
+{
+	"rules": [
+		{ "src_ip": "all"         , "dest_ip": "1.1.1.1", "lookup_table": "1", "name": "global route to cloudflare" },
+		{ "src_ip": "192.168.1.32", "dest_ip": "2.2.2.2", "lookup_table": "4", "name": "route John to corp website via another gw" }
+	]
+}
