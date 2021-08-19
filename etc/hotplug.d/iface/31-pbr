@@ -103,9 +103,6 @@ __cleanup_var() {
 
 
 
-__result_check() {
-}
-
 __action_iface=$INTERFACE
 __version_new=$(__get_last_modifydate $__pbr_src_file)
 __log "Checking ...Current rules version is $__version_new ..."
@@ -114,6 +111,13 @@ __log "=====================$__version_new====================="
 case $ACTION in
 	ifup)
 		__log "| ${__action_iface} ↑"
+		[ ! -rf $__pbr_src_file ] && {
+			__log "No rules found, skipping..."
+			exit
+		}
+
+
+
 		[ -f $__pbr_file_pid ] && {
 			__log "Seems like something went in a wrong way..."
 			__version_current=$(cat $__pbr_file_pid)
@@ -127,7 +131,7 @@ case $ACTION in
 				__cleanup_var
 			} || {
 				__log "Nah, everything is ok, nothing to apply, my bad. Your rules are up-to-date!"
-				break
+				exit
 			} # Version check
 		} # Incorrect workflow
 
@@ -150,6 +154,8 @@ case $ACTION in
 		__log "| ${__action_iface} ↓"
 		[ ! -rf "${__pbr_file_pid}" ] && exit 100
 		[ ! -rf "${__pbr_file_rules}" ] && exit 101
+
+
 
 		[ ! $(__process_rules $__pbr_file_rules del $__action_iface) ] && {
 			__log "Unable to delete applied rules..."
