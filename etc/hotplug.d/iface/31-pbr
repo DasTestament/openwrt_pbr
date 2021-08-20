@@ -42,6 +42,48 @@ __log_rule() {
 
 
 
+addr4_is_cidr() {
+	local octet='([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])'
+	local mask='([0-9]|[12][0-9]|3[012])'
+	local ipaddr=$1
+	
+	[[ $ipaddr =~ ^$octet\.$octet\.$octet\.$octet/$mask$ ]] && echo "0" || echo ""
+}
+
+
+
+addr4_get() {
+	local __val=$1
+	[ $__val = all ] && {
+		echo "$__val" 
+		return
+	} || [ $(addr4_is_cidr $__val) ] && {
+		echo "$__val"
+		return
+	} || { 
+		resolveip -4 $__val
+	}
+}
+
+
+
+__rule_apply() {
+	local act=$1
+	local ip_src=$2
+	local ip_dst=$3
+	local tbl=$4
+	local rule_name=$5
+
+	#__log "Trying to ($5) route $2 to $3 via table $4 with action $1"
+	ip rule ${act} from ${ip_src} to ${ip_dst} table ${tbl} && __log_rule $act "0" "$rule_name" || __log_rule $__action "" "$rule_name"
+}
+
+
+
+#
+# $1 - file name of json with rules to apply
+# $2 - interface action (ifup, ifdown, etc...)
+# $3 - interface 
 __process_rules() {
 	local __rule_file=$1
 	local __action=$2
@@ -81,14 +123,23 @@ __process_rules() {
 		json_close_object
 
 		__rule_idx=$(($__rule_idx + 1))
-		ip rule ${__action} from ${rule_src_ip} to ${rule_dest_ip} table ${rule_lookuptable} &&	__log_rule $__action "0" "$rule_name" || __log_rule $__action "" "$rule_name"
+
+		# resolve ipv4 names
+		for __ip_src_rslvd in $(addr4_get $rule_src_ip)
+		do
+			for __ip_dst_rslvd in $(addr4_get $rule_dest_ip)
+			do
+				__rule_apply $__action $__ip_src_rslvd $__ip_dst_rslvd $rule_lookuptable "$rule_name"
+			done
+		done
 	done
 	json_cleanup
 	[ ${__rule_idx} -gt 1 ] && echo "0" || echo ""
 } 
 
 
-
+# 
+# $1 - fine name to get it's modify date
 __get_last_modifydate() {
 	local fname=$1
 	echo `date -r $fname +"%Y%m%d%H%M%S"`
@@ -111,9 +162,9 @@ __log "=====================$__version_new====================="
 case $ACTION in
 	ifup)
 		__log "| ${__action_iface} ↑"
-		[ ! -rf $__pbr_src_file ] && {
+		[ ! -f $__pbr_src_file ] && {
 			__log "No rules found, skipping..."
-			exit
+			break
 		}
 
 
@@ -131,7 +182,7 @@ case $ACTION in
 				__cleanup_var
 			} || {
 				__log "Nah, everything is ok, nothing to apply, my bad. Your rules are up-to-date!"
-				exit
+				break
 			} # Version check
 		} # Incorrect workflow
 
