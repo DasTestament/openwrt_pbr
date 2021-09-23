@@ -61,7 +61,7 @@ addr4_get() {
 		echo "$__val"
 		return
 	} || { 
-		resolveip -4 $__val
+		resolveip -4 $__val 1.1.1.1
 	}
 }
 
@@ -73,9 +73,17 @@ __rule_apply() {
 	local ip_dst=$3
 	local tbl=$4
 	local rule_name=$5
+	local count=0
 
-	#__log "Trying to ($5) route $2 to $3 via table $4 with action $1"
-	ip rule ${act} from ${ip_src} to ${ip_dst} table ${tbl} && __log_rule $act "0" "$rule_name" || __log_rule $__action "" "$rule_name"
+	while [ $(ip rule ${act} from ${ip_src} to ${ip_dst} table ${tbl} && echo "1" || echo "") ]
+	do
+		count=$(($count + 1))
+		[ $act == add ] && {
+			__log_rule $act "0" "$rule_name"
+			break
+		} || __log_rule $__action "" "$rule_name"
+	done
+	[ $count -gt 0 ] && echo "0" || echo ""
 }
 
 
@@ -111,8 +119,9 @@ __process_rules() {
 	}
 	json_select rules
 
-	__log "Processing rules from ${__rule_file}..."
+	__log "Processing rules from \"${__rule_file}\"..."
 	local __rule_idx=1
+	local __rule_applied_count=0
 	while json_is_a ${__rule_idx} object
 	do
 		json_select $__rule_idx
@@ -129,12 +138,13 @@ __process_rules() {
 		do
 			for __ip_dst_rslvd in $(addr4_get $rule_dest_ip)
 			do
-				__rule_apply $__action $__ip_src_rslvd $__ip_dst_rslvd $rule_lookuptable "$rule_name"
+				[ $(__rule_apply $__action $__ip_src_rslvd $__ip_dst_rslvd $rule_lookuptable "$rule_name") ] && __rule_applied_count=$(($__rule_applied_count + 1))
 			done
 		done
 	done
 	json_cleanup
-	[ ${__rule_idx} -gt 1 ] && echo "0" || echo ""
+	__log "Applied rules count: $__rule_applied_count" 
+	[ $__rule_applied_count -gt 0 ] && echo "0" || echo ""
 } 
 
 
